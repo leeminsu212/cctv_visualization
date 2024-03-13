@@ -9,8 +9,8 @@ from folium.plugins import MarkerCluster
 from folium.plugins import HeatMap
 import math
 import json
-import requests
-import pprint
+# import requests
+# import pprint
 import ast
 import streamlit as st
 from streamlit_folium import st_folium
