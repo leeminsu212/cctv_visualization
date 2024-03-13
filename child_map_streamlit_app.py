@@ -299,178 +299,194 @@ df_wc4 = df_wc3.pivot_table(index='자치구', values=['사고건수', '사상�
 df_wc4['중상자 비율'] = df_wc4['중상자수'] / df_wc4['사상자수']
 ### -----
 
-### folium
-# 구 선택
-gu = ['은평구']
-
-df_cctv_gu = df_cctv2[df_cctv2['자치구'].isin(gu)]
-df_child_gu = df_child2[df_child2['자치구'].isin(gu)]
-df_al_gu = df_al3[df_al3['자치구'].isin(gu)]
-df_p_gu = df_p5[df_p5['자치구'].isin(gu)]
-
-# folium에서 marker cluster로 표시하기 위해 cctv와 비상벨을 하나의 데이터프레임으로 합침
-df_al_gu.rename(columns={'WGS84위도': '위도', 'WGS84경도': '경도'}, inplace=True)
-df_sec_gu = pd.concat([df_cctv_gu, df_al_gu])
-# cctv와 비상벨을 구별하기 위해 설치목적 컬럼의 결측치를 채워줌 (cctv는 모두 결측치이므로 둘을 구별할 수 있음)
-df_sec_gu['설치목적'].fillna('None', inplace=True)
-
-df_wc_seoul = df_wc[df_wc['지점명'].str.contains('서울특별시')]
-df_wc_seoul['중상자 비율'] = df_wc_seoul['중상자수'] / df_wc_seoul['사상자수']
-df_wc_seoul['자치구'] = df_wc_seoul['지점명'].apply(lambda x: x.split(' ')[1])
-df_wc_seoul2 = df_wc_seoul.reset_index()
-df_wc_seoul2 = df_wc_seoul2[['사고다발지FID', '자치구', '지점명', '사상자수', '중상자 비율', '위도', '경도', '다발지역폴리곤']]
-
-df_wc_gu = df_wc_seoul2[df_wc_seoul2['자치구'].isin(gu)]
-df_wc_gu2 = df_wc_gu.reset_index()
-df_wc_gu2.drop('index', axis=1, inplace=True)
-
-# 행정동 표시를 위한 geo data 읽어오기
-geo_path = 'geo_data/hangjeongdong_서울특별시.geojson'
-# key_on='feature.properties.sggnm'
-geo_data = json.load(open(geo_path, encoding='utf-8'))
-
-# gu 변수에 해당하는 구만 선택
-gu_features = []
-for i in geo_data['features']:
-    if i['properties']['sggnm'] in gu:
-        gu_features.append(i)
-
-geo_data_gu = geo_data.copy()
-geo_data_gu['features'] = gu_features
-
-# 보행어린이 사고다발지역 표시를 위해 df_wc_seoul2 데이터프레임 값들로 json 파일 만들기
-geo_wc_features = []
-for i in range(len(df_wc_gu2)):
-    features_dict = {}
-    properties_dict = {}
-    geometry_dict = {}
-    
-    # features 딕셔너리 내 properties key값에 해당하는 딕셔너리 부분
-    properties_dict['OBJECTID'] = int(i + 1)
-    properties_dict['fid'] = str(df_wc_gu2['사고다발지FID'][i])
-    properties_dict['adm_nm'] = df_wc_gu2['지점명'][i]
-    properties_dict['sggnm'] = df_wc_gu2['자치구'][i]
-    properties_dict['casualties'] = int(df_wc_gu2['사상자수'][i])
-    properties_dict['si_per'] = float(df_wc_gu2['중상자 비율'][i])
-    
-    # features 딕셔너리 내 geometry key값에 해당하는 딕셔너리 부분
-    geometry_dict['type'] = 'Polygon'
-    coordinates_string = df_wc_gu2['다발지역폴리곤'][i].split(':')[2][:-1]
-    coordinates_lst = ast.literal_eval(coordinates_string)
-    geometry_dict['coordinates'] = coordinates_lst
-    
-    # features 딕셔너리에 합치는 작업
-    features_dict['type'] = 'Feature'
-    features_dict['properties'] = properties_dict
-    features_dict['geometry'] = geometry_dict
-    
-    # df_wc_seoul2의 각 행마다 딕셔너리 형태로 변환 후 리스트에 저장
-    geo_wc_features.append(features_dict)
-
-geo_wc = geo_data.copy()
-geo_wc['features'] = geo_wc_features
-
-# 시작 좌표
-latitude = 37.47
-longitude = 126.93
-r = 100
-r2 = 0.00101
-
-m = folium.Map(location=[latitude, longitude],
-               tiles='CartoDB positron',
-               zoom_start=14,
-               width=900,
-               height=600)
-
-# cctv, 안전비상벨 지도에 표시
-marker_cluster = MarkerCluster().add_to(m)
-for lat, lon, check in zip(df_sec_gu['위도'], df_sec_gu['경도'], df_sec_gu['설치목적']):
-    if check == 'None':
-        typ = 'CCTV'
-    else:
-        typ = '비상벨'
-    folium.Marker([lat, lon], icon = folium.Icon(color='green'), tooltip=typ).add_to(marker_cluster)
-    
-# 경찰서(지구대, 파출소 포함) 지도에 표시
-for lat, lon, addr in zip(df_p_gu['위도'], df_p_gu['경도'], df_p_gu['주소']):
-    folium.Marker([lat, lon], icon = folium.Icon(color='blue', icon='star'), tooltip=addr).add_to(m)
-
-# 보행어린이 사고다발지역 폴리곤 지도에 표시
-fm = folium.Choropleth(geo_data=geo_wc,
-                        # key_on='feature.properties.sggnm',
-                        line_color='red',
-                        line_opacity=1,
-                        fill_color='red',
-                        fill_opacity=0.3
-                        ).add_to(m)
-
-# 보행어린이 사고다발지역 포인트 지도에 표시
-for lat, lon, cas, per in zip(df_wc_gu2['위도'], df_wc_gu2['경도'], df_wc_gu2['사상자수'], df_wc_gu2['중상자 비율']):
-    folium.Marker([lat, lon], icon = folium.Icon(color='red', icon='flag'), tooltip=f'사상자 수:{cas}', popup=f'중상자 비율:{per:.2f}').add_to(m)
-
-# 자치구 어린이시설마다 100미터 이내 CCTV, 비상벨 수 계산
-colors_i = 1
-colors = {-1: 'gray', 1: 'black'}
-for g in gu:
-    colors_i *= -1
-    
-    # g 변수에 해당하는 구만 선택
-    gu_features = []
-    for i in geo_data_gu['features']:
-        if i['properties']['sggnm'] == g:
-            gu_features.append(i)
-    geo_data_gu2 = geo_data.copy()
-    geo_data_gu2['features'] = gu_features
-    
-    df_child_gu2 = df_child_gu[df_child_gu['자치구'] == g]
-    
-    df_sec_gu2 = df_sec_gu[df_sec_gu['자치구'] == g]
-    
-    # sec_cnt_lst : 해당 자치구(g) 안에 있는 어린이시설별 100미터 이내 CCTV 및 비상벨 수가 들어있는 리스트
-    sec_cnt_lst = []
-    
-    # 행정동 경계 지도에 표시
-    fm = folium.Choropleth(geo_data=geo_data_gu2,
-                        # key_on='feature.properties.sggnm',
-                        line_color='black',
-                        line_opacity=1,
-                        fill_color=colors[colors_i],
-                        fill_opacity=0.3
-                        ).add_to(m)
-
-    # 영역 정보 표시하는 부분
-    for idx, dict in enumerate(geo_data_gu2['features']):
-        # 자치구 행정동 표시
-        name = dict['properties']['adm_nm'].split(' ')[1] + ' ' + dict['properties']['adm_nm'].split(' ')[2]
-        # 추가할 정보
-        # cctv_cnt = df_cctv[df_cctv['구분'] == name]['총계'].values[0]
-        txt = f'<b><h5>{name}</h5></b>'
-        geo_data_gu2['features'][idx]['properties']['tooltip'] = txt
-    fm.geojson.add_child(folium.features.GeoJsonTooltip(['tooltip'], labels=False))
-    
-    # 각 어린이시설별 100미터 이내 CCTV, 비상벨 수 계산
-    for lat, lon, name in zip(df_child_gu2['위도'], df_child_gu2['경도'], df_child_gu2['시설명']):
-        # sec_cnt : 각 어린이시설별 100미터 이내 CCTV, 비상벨 수
-        sec_cnt = 0
-        # 해당 자치구 내 모든 CCTV 및 비상벨을 확인
-        for lat2, lon2 in zip(df_sec_gu2['위도'], df_sec_gu2['경도']):
-            if math.pow(r2, 2) >= (math.pow(lat - lat2, 2) + math.pow(lon - lon2, 2)):
-                sec_cnt += 1
-        sec_cnt_lst.append(sec_cnt)   
-
-    # 어린이시설 지도에 표시
-    for lat, lon, name, sec_cnt in zip(df_child_gu2['위도'], df_child_gu2['경도'], df_child_gu2['시설명'], sec_cnt_lst):
-        # 어린이시설 100미터 이내 CCTV, 비상벨 수가 평균 미만은 빨간색 평균 이상은 초록색으로 표시 
-        if sec_cnt < np.mean(sec_cnt_lst):
-            c = 'pink'
-        else:
-            c = 'pink'
-        folium.Marker([lat, lon], icon = folium.Icon(color=c, icon='home'), tooltip=name, popup=f'100미터 내 CCTV, 비상벨 수:{sec_cnt}').add_to(m)
-        folium.Circle([lat, lon], radius=r, color=c).add_to(m)
-### -----
-
 ### streamlit
-# streamlit 제목
+# 구 선택
+gu_selected = []
+
 st.title('어린이 시설 및 CCTV 시각화')
-st_map = st_folium(m, width=750, height=500)
+# 생성된 각 구의 체크박스를 저장하는 리스트
+cb_lst = []
+gu_name = ['강남구', '강동구', '강북구', '강서구', '관악구', '광진구', '구로구', '금천구', '노원구', '도봉구', '동대문구', '동작구', '마포구',
+           '서대문구', '서초구', '성동구', '성북구', '송파구', '양천구', '영등포구', '용산구', '은평구', '종로구', '중구', '중랑구']
+# 체크박스를 5x5로 보여주기 위한 columns
+st_cols = st.columns(5)
+
+# 각 구마다 체크박스 생성
+for i in range(len(gu_name)):
+    with st_cols[i % 5]:
+        cb_lst.append(st.checkbox(gu_name[i]))
+
+# 체크박스가 체크되어 있다면 선택된 구 리스트에 추가
+for i in range(len(gu_name)):    
+    if cb_lst[i]:
+        gu_selected.append(gu_name[i])
+
+if st.button('지도 보기'):
+    ### folium
+    df_cctv_gu = df_cctv2[df_cctv2['자치구'].isin(gu_selected)]
+    df_child_gu = df_child2[df_child2['자치구'].isin(gu_selected)]
+    df_al_gu = df_al3[df_al3['자치구'].isin(gu_selected)]
+    df_p_gu = df_p5[df_p5['자치구'].isin(gu_selected)]
+
+    # folium에서 marker cluster로 표시하기 위해 cctv와 비상벨을 하나의 데이터프레임으로 합침
+    df_al_gu.rename(columns={'WGS84위도': '위도', 'WGS84경도': '경도'}, inplace=True)
+    df_sec_gu = pd.concat([df_cctv_gu, df_al_gu])
+    # cctv와 비상벨을 구별하기 위해 설치목적 컬럼의 결측치를 채워줌 (cctv는 모두 결측치이므로 둘을 구별할 수 있음)
+    df_sec_gu['설치목적'].fillna('None', inplace=True)
+
+    df_wc_seoul = df_wc[df_wc['지점명'].str.contains('서울특별시')]
+    df_wc_seoul['중상자 비율'] = df_wc_seoul['중상자수'] / df_wc_seoul['사상자수']
+    df_wc_seoul['자치구'] = df_wc_seoul['지점명'].apply(lambda x: x.split(' ')[1])
+    df_wc_seoul2 = df_wc_seoul.reset_index()
+    df_wc_seoul2 = df_wc_seoul2[['사고다발지FID', '자치구', '지점명', '사상자수', '중상자 비율', '위도', '경도', '다발지역폴리곤']]
+
+    df_wc_gu = df_wc_seoul2[df_wc_seoul2['자치구'].isin(gu_selected)]
+    df_wc_gu2 = df_wc_gu.reset_index()
+    df_wc_gu2.drop('index', axis=1, inplace=True)
+
+    # 행정동 표시를 위한 geo data 읽어오기
+    geo_path = 'geo_data/hangjeongdong_서울특별시.geojson'
+    # key_on='feature.properties.sggnm'
+    geo_data = json.load(open(geo_path, encoding='utf-8'))
+
+    # gu_selected 변수에 해당하는 구만 선택
+    gu_features = []
+    for i in geo_data['features']:
+        if i['properties']['sggnm'] in gu_selected:
+            gu_features.append(i)
+
+    geo_data_gu = geo_data.copy()
+    geo_data_gu['features'] = gu_features
+
+    # 보행어린이 사고다발지역 표시를 위해 df_wc_seoul2 데이터프레임 값들로 json 파일 만들기
+    geo_wc_features = []
+    for i in range(len(df_wc_gu2)):
+        features_dict = {}
+        properties_dict = {}
+        geometry_dict = {}
+        
+        # features 딕셔너리 내 properties key값에 해당하는 딕셔너리 부분
+        properties_dict['OBJECTID'] = int(i + 1)
+        properties_dict['fid'] = str(df_wc_gu2['사고다발지FID'][i])
+        properties_dict['adm_nm'] = df_wc_gu2['지점명'][i]
+        properties_dict['sggnm'] = df_wc_gu2['자치구'][i]
+        properties_dict['casualties'] = int(df_wc_gu2['사상자수'][i])
+        properties_dict['si_per'] = float(df_wc_gu2['중상자 비율'][i])
+        
+        # features 딕셔너리 내 geometry key값에 해당하는 딕셔너리 부분
+        geometry_dict['type'] = 'Polygon'
+        coordinates_string = df_wc_gu2['다발지역폴리곤'][i].split(':')[2][:-1]
+        coordinates_lst = ast.literal_eval(coordinates_string)
+        geometry_dict['coordinates'] = coordinates_lst
+        
+        # features 딕셔너리에 합치는 작업
+        features_dict['type'] = 'Feature'
+        features_dict['properties'] = properties_dict
+        features_dict['geometry'] = geometry_dict
+        
+        # df_wc_seoul2의 각 행마다 딕셔너리 형태로 변환 후 리스트에 저장
+        geo_wc_features.append(features_dict)
+
+    geo_wc = geo_data.copy()
+    geo_wc['features'] = geo_wc_features
+
+    # 시작 좌표
+    latitude = 37.56637
+    longitude = 126.97795
+    r = 100
+    r2 = 0.00101
+
+    m = folium.Map(location=[latitude, longitude],
+                tiles='CartoDB positron',
+                zoom_start=14,
+                width=900,
+                height=600)
+
+    # cctv, 안전비상벨 지도에 표시
+    marker_cluster = MarkerCluster().add_to(m)
+    for lat, lon, check in zip(df_sec_gu['위도'], df_sec_gu['경도'], df_sec_gu['설치목적']):
+        if check == 'None':
+            typ = 'CCTV'
+        else:
+            typ = '비상벨'
+        folium.Marker([lat, lon], icon = folium.Icon(color='green'), tooltip=typ).add_to(marker_cluster)
+        
+    # 경찰서(지구대, 파출소 포함) 지도에 표시
+    for lat, lon, addr in zip(df_p_gu['위도'], df_p_gu['경도'], df_p_gu['주소']):
+        folium.Marker([lat, lon], icon = folium.Icon(color='blue', icon='star'), tooltip=addr).add_to(m)
+
+    # 보행어린이 사고다발지역 폴리곤 지도에 표시
+    fm = folium.Choropleth(geo_data=geo_wc,
+                            # key_on='feature.properties.sggnm',
+                            line_color='red',
+                            line_opacity=1,
+                            fill_color='red',
+                            fill_opacity=0.3
+                            ).add_to(m)
+
+    # 보행어린이 사고다발지역 포인트 지도에 표시
+    for lat, lon, cas, per in zip(df_wc_gu2['위도'], df_wc_gu2['경도'], df_wc_gu2['사상자수'], df_wc_gu2['중상자 비율']):
+        folium.Marker([lat, lon], icon = folium.Icon(color='red', icon='flag'), tooltip=f'사상자 수:{cas}', popup=f'중상자 비율:{per:.2f}').add_to(m)
+
+    # 자치구 어린이시설마다 100미터 이내 CCTV, 비상벨 수 계산
+    colors_i = 1
+    colors = {-1: 'gray', 1: 'black'}
+    for g in gu_selected:
+        colors_i *= -1
+        
+        # g 변수에 해당하는 구만 선택
+        gu_features = []
+        for i in geo_data_gu['features']:
+            if i['properties']['sggnm'] == g:
+                gu_features.append(i)
+        geo_data_gu2 = geo_data.copy()
+        geo_data_gu2['features'] = gu_features
+        
+        df_child_gu2 = df_child_gu[df_child_gu['자치구'] == g]
+        
+        df_sec_gu2 = df_sec_gu[df_sec_gu['자치구'] == g]
+        
+        # sec_cnt_lst : 해당 자치구(g) 안에 있는 어린이시설별 100미터 이내 CCTV 및 비상벨 수가 들어있는 리스트
+        sec_cnt_lst = []
+        
+        # 행정동 경계 지도에 표시
+        fm = folium.Choropleth(geo_data=geo_data_gu2,
+                            # key_on='feature.properties.sggnm',
+                            line_color='black',
+                            line_opacity=1,
+                            fill_color=colors[colors_i],
+                            fill_opacity=0.3
+                            ).add_to(m)
+
+        # 영역 정보 표시하는 부분
+        for idx, dict in enumerate(geo_data_gu2['features']):
+            # 자치구 행정동 표시
+            name = dict['properties']['adm_nm'].split(' ')[1] + ' ' + dict['properties']['adm_nm'].split(' ')[2]
+            # 추가할 정보
+            # cctv_cnt = df_cctv[df_cctv['구분'] == name]['총계'].values[0]
+            txt = f'<b><h5>{name}</h5></b>'
+            geo_data_gu2['features'][idx]['properties']['tooltip'] = txt
+        fm.geojson.add_child(folium.features.GeoJsonTooltip(['tooltip'], labels=False))
+        
+        # 각 어린이시설별 100미터 이내 CCTV, 비상벨 수 계산
+        for lat, lon, name in zip(df_child_gu2['위도'], df_child_gu2['경도'], df_child_gu2['시설명']):
+            # sec_cnt : 각 어린이시설별 100미터 이내 CCTV, 비상벨 수
+            sec_cnt = 0
+            # 해당 자치구 내 모든 CCTV 및 비상벨을 확인
+            for lat2, lon2 in zip(df_sec_gu2['위도'], df_sec_gu2['경도']):
+                if math.pow(r2, 2) >= (math.pow(lat - lat2, 2) + math.pow(lon - lon2, 2)):
+                    sec_cnt += 1
+            sec_cnt_lst.append(sec_cnt)   
+
+        # 어린이시설 지도에 표시
+        for lat, lon, name, sec_cnt in zip(df_child_gu2['위도'], df_child_gu2['경도'], df_child_gu2['시설명'], sec_cnt_lst):
+            # 어린이시설 100미터 이내 CCTV, 비상벨 수가 평균 미만은 빨간색 평균 이상은 초록색으로 표시 
+            if sec_cnt < np.mean(sec_cnt_lst):
+                c = 'pink'
+            else:
+                c = 'pink'
+            folium.Marker([lat, lon], icon = folium.Icon(color=c, icon='home'), tooltip=name, popup=f'100미터 내 CCTV, 비상벨 수:{sec_cnt}').add_to(m)
+            folium.Circle([lat, lon], radius=r, color=c).add_to(m)
+    ### -----
+    st_map = st_folium(m, width=750, height=500)
 ### -----
